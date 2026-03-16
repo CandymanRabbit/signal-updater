@@ -1,0 +1,303 @@
+#!/bin/bash
+# install — install signal-update and optionally schedule it via a macOS LaunchAgent
+
+set -euo pipefail
+
+RAW_BASE="https://github.com/CandymanRabbit/signal-updater/main"
+INSTALL_DIR="${HOME}/.local/bin"
+INSTALL_PATH="${INSTALL_DIR}/signal-update"
+PLIST_LABEL="com.user.signal-updater"
+PLIST_PATH="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
+LOG_PATH="${HOME}/Library/Logs/signal-updater.log"
+
+SCHEDULE=false
+UNINSTALL=false
+TIME_ARG=""
+DAYS_ARG=""
+
+# ── Usage ─────────────────────────────────────────────────────────────────────
+usage() {
+    cat << 'EOF'
+Usage: ./install [options]
+
+Options:
+  -s            Enable scheduling via LaunchAgent (default: every day at 09:00)
+  -t <time>     Time of day — 24h format (e.g. 14:30) or 12h format (e.g. 2:30pm, 9am)
+  -d <days>     Day(s) of week — use alongside -s
+                  Names:   Mon Tue Wed Thu Fri Sat Sun  (case-insensitive)
+                  Numbers: 0=Sun 1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat
+                  Comma-separated: Mon,Wed,Fri  or  1,3,5
+                  Range:           Mon-Fri       or  1-5
+                  Mixed:           Mon-Wed,Fri,6
+  -u            Uninstall: remove LaunchAgent and installed script
+  -h            Show this help
+
+Examples:
+  ./install                             Install only, no schedule
+  ./install -s                          Schedule: every day at 09:00
+  ./install -s -t 14:30                 Schedule: every day at 14:30
+  ./install -s -t 8:30am               Schedule: every day at 08:30
+  ./install -s -d Mon-Fri              Schedule: Mon–Fri at 09:00
+  ./install -s -d Mon,Wed,Fri -t 7am   Schedule: Mon/Wed/Fri at 07:00
+  ./install -s -d 1-5 -t 22:00         Schedule: Mon–Fri at 22:00
+  ./install -u                          Uninstall
+EOF
+}
+
+# ── Uninstall ─────────────────────────────────────────────────────────────────
+uninstall() {
+    echo "Uninstalling signal-update..."
+    if [[ -f "$PLIST_PATH" ]]; then
+        launchctl unload "$PLIST_PATH" 2>/dev/null || true
+        rm -f "$PLIST_PATH"
+        echo "Removed LaunchAgent: ${PLIST_PATH}"
+    else
+        echo "No LaunchAgent found."
+    fi
+    if [[ -f "$INSTALL_PATH" ]]; then
+        rm -f "$INSTALL_PATH"
+        echo "Removed: ${INSTALL_PATH}"
+    else
+        echo "No script found at ${INSTALL_PATH}."
+    fi
+    echo "Done."
+}
+
+# ── Helper: day name or number (0-6) → weekday number ────────────────────────
+day_to_num() {
+    local d
+    d=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+    case "$d" in
+        0|sun) echo 0 ;;
+        1|mon) echo 1 ;;
+        2|tue) echo 2 ;;
+        3|wed) echo 3 ;;
+        4|thu) echo 4 ;;
+        5|fri) echo 5 ;;
+        6|sat) echo 6 ;;
+        *) echo "" ;;
+    esac
+}
+
+# ── Parse -d value → space-separated weekday numbers (deduped) ───────────────
+parse_days() {
+    local input="$1"
+    local result="" part num start_str end_str start_num end_num d
+    local PARTS
+
+    IFS=',' read -ra PARTS <<< "$input"
+
+    for part in "${PARTS[@]}"; do
+        part=$(echo "$part" | tr -d '[:space:]')
+        [[ -z "$part" ]] && continue
+
+        # Range: two alphanumeric tokens separated by a single hyphen
+        if echo "$part" | grep -qE '^[A-Za-z0-9]+-[A-Za-z0-9]+$'; then
+            start_str="${part%%-*}"
+            end_str="${part##*-}"
+            start_num=$(day_to_num "$start_str")
+            end_num=$(day_to_num "$end_str")
+            if [[ -z "$start_num" || -z "$end_num" ]]; then
+                echo "Error: Invalid day range '${part}'." >&2; exit 1
+            fi
+            if (( start_num <= end_num )); then
+                for (( d=start_num; d<=end_num; d++ )); do result="$result $d"; done
+            else
+                # Wrap-around: e.g. Fri-Mon → 5 6 0 1
+                for (( d=start_num; d<=6; d++ )); do result="$result $d"; done
+                for (( d=0; d<=end_num; d++ )); do result="$result $d"; done
+            fi
+        else
+            num=$(day_to_num "$part")
+            if [[ -z "$num" ]]; then
+                echo "Error: Invalid day '${part}'. Use Sun-Sat, 0-6, ranges (Mon-Fri), or comma lists." >&2
+                exit 1
+            fi
+            result="$result $num"
+        fi
+    done
+
+    # Deduplicate, preserving order
+    local seen="" final="" item
+    for item in $result; do
+        case " $seen " in
+            *" $item "*) ;;
+            *) seen="$seen $item"; final="$final $item" ;;
+        esac
+    done
+    echo $final
+}
+
+# ── Parse -t value → "hour minute" ───────────────────────────────────────────
+parse_time() {
+    local input="$1"
+    local lower hour minute ampm
+    lower=$(echo "$input" | tr '[:upper:]' '[:lower:]')
+
+    # 12h: 9am / 9:30am / 12:00pm
+    if [[ "$lower" =~ ^([0-9]{1,2})(:([0-9]{2}))?(am|pm)$ ]]; then
+        hour="${BASH_REMATCH[1]}"
+        minute="${BASH_REMATCH[3]:-0}"
+        ampm="${BASH_REMATCH[4]}"
+        hour=$((10#$hour)); minute=$((10#$minute))
+        if (( hour < 1 || hour > 12 || minute > 59 )); then
+            echo "Error: Invalid 12h time '${input}'." >&2; exit 1
+        fi
+        if [[ "$ampm" == "am" ]]; then
+            (( hour == 12 )) && hour=0
+        else
+            (( hour != 12 )) && hour=$(( hour + 12 ))
+        fi
+    # 24h: 14:30 / 9:05
+    elif [[ "$lower" =~ ^([0-9]{1,2}):([0-9]{2})$ ]]; then
+        hour=$((10#${BASH_REMATCH[1]}))
+        minute=$((10#${BASH_REMATCH[2]}))
+        if (( hour > 23 || minute > 59 )); then
+            echo "Error: Invalid 24h time '${input}'." >&2; exit 1
+        fi
+    else
+        echo "Error: Unrecognised time '${input}'. Use HH:MM (24h) or H:MMam/pm (12h)." >&2; exit 1
+    fi
+    echo "$hour $minute"
+}
+
+# ── Write LaunchAgent plist ───────────────────────────────────────────────────
+write_plist() {
+    local hour=$1 minute=$2
+    shift 2
+    local days=("$@")
+
+    {
+        printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+        printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"\n'
+        printf '  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        printf '<plist version="1.0">\n<dict>\n'
+        printf '    <key>Label</key>\n    <string>%s</string>\n' "$PLIST_LABEL"
+        printf '    <key>ProgramArguments</key>\n    <array>\n        <string>%s</string>\n    </array>\n' "$INSTALL_PATH"
+        printf '    <key>StartCalendarInterval</key>\n'
+        if (( ${#days[@]} == 0 )); then
+            printf '    <dict>\n'
+            printf '        <key>Hour</key>\n        <integer>%d</integer>\n' "$hour"
+            printf '        <key>Minute</key>\n        <integer>%d</integer>\n' "$minute"
+            printf '    </dict>\n'
+        else
+            printf '    <array>\n'
+            local d
+            for d in "${days[@]}"; do
+                printf '        <dict>\n'
+                printf '            <key>Weekday</key>\n            <integer>%d</integer>\n' "$d"
+                printf '            <key>Hour</key>\n            <integer>%d</integer>\n' "$hour"
+                printf '            <key>Minute</key>\n            <integer>%d</integer>\n' "$minute"
+                printf '        </dict>\n'
+            done
+            printf '    </array>\n'
+        fi
+        printf '    <key>StandardOutPath</key>\n    <string>%s</string>\n' "$LOG_PATH"
+        printf '    <key>StandardErrorPath</key>\n    <string>%s</string>\n' "$LOG_PATH"
+        printf '    <key>RunAtLoad</key>\n    <false/>\n'
+        printf '</dict>\n</plist>\n'
+    } > "$PLIST_PATH"
+}
+
+# ── Argument parsing ──────────────────────────────────────────────────────────
+while getopts ":sd:t:uh" opt; do
+    case $opt in
+        s) SCHEDULE=true ;;
+        d) DAYS_ARG="$OPTARG" ;;
+        t) TIME_ARG="$OPTARG" ;;
+        u) UNINSTALL=true ;;
+        h) usage; exit 0 ;;
+        :) echo "Error: -${OPTARG} requires an argument." >&2; echo; usage; exit 1 ;;
+        \?) echo "Error: Unknown option -${OPTARG}." >&2; echo; usage; exit 1 ;;
+    esac
+done
+
+# ── Uninstall mode ────────────────────────────────────────────────────────────
+if [[ "$UNINSTALL" == true ]]; then
+    uninstall; exit 0
+fi
+
+# Warn if -d / -t used without -s
+if [[ "$SCHEDULE" == false && ( -n "$DAYS_ARG" || -n "$TIME_ARG" ) ]]; then
+    echo "Warning: -d/-t have no effect without -s." >&2
+fi
+
+# ── Install script ────────────────────────────────────────────────────────────
+LOCAL_SRC="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/signal-update"
+
+mkdir -p "$INSTALL_DIR"
+
+if [[ -f "$LOCAL_SRC" ]]; then
+    echo "Installing signal-update from local repo..."
+    install -m 755 "$LOCAL_SRC" "$INSTALL_PATH"
+else
+    echo "Downloading signal-update from GitHub..."
+    TMP_SCRIPT=$(mktemp)
+    trap 'rm -f "$TMP_SCRIPT"' EXIT
+    if ! curl -fsSL "${RAW_BASE}/signal-update" -o "$TMP_SCRIPT"; then
+        echo "Error: Could not download signal-update from GitHub." >&2
+        exit 1
+    fi
+    install -m 755 "$TMP_SCRIPT" "$INSTALL_PATH"
+fi
+echo "Installed: ${INSTALL_PATH}"
+
+# Add ~/.local/bin to PATH in ~/.zshrc if not already present
+ZSHRC="${HOME}/.zshrc"
+PATH_LINE='export PATH="${HOME}/.local/bin:${PATH}"'
+if [[ ":${PATH}:" != *":${INSTALL_DIR}:"* ]]; then
+    if ! grep -qF "$PATH_LINE" "$ZSHRC" 2>/dev/null; then
+        echo "" >> "$ZSHRC"
+        echo "# Added by signal-updater installer" >> "$ZSHRC"
+        echo "$PATH_LINE" >> "$ZSHRC"
+        echo "Added ${INSTALL_DIR} to PATH in ${ZSHRC}"
+        echo "Run 'source ~/.zshrc' or open a new terminal for it to take effect."
+    fi
+fi
+
+# ── Scheduling ────────────────────────────────────────────────────────────────
+if [[ "$SCHEDULE" == true ]]; then
+    mkdir -p "${HOME}/Library/LaunchAgents"
+
+    # Parse time (default 09:00)
+    HOUR=9; MINUTE=0
+    if [[ -n "$TIME_ARG" ]]; then
+        read -r HOUR MINUTE <<< "$(parse_time "$TIME_ARG")"
+    fi
+
+    # Parse days (default: all days)
+    DAYS=()
+    if [[ -n "$DAYS_ARG" ]]; then
+        read -ra DAYS <<< "$(parse_days "$DAYS_ARG")"
+    fi
+
+    if [[ -f "$PLIST_PATH" ]]; then
+        launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    fi
+
+    if (( ${#DAYS[@]} > 0 )); then
+        write_plist "$HOUR" "$MINUTE" "${DAYS[@]}"
+    else
+        write_plist "$HOUR" "$MINUTE"
+    fi
+
+    launchctl load "$PLIST_PATH"
+
+    # Human-readable summary
+    DAY_NAMES=("Sun" "Mon" "Tue" "Wed" "Thu" "Fri" "Sat")
+    if (( ${#DAYS[@]} == 0 )); then
+        DAY_LABEL="every day"
+    else
+        DAY_LABEL=""
+        for d in "${DAYS[@]}"; do
+            [[ -n "$DAY_LABEL" ]] && DAY_LABEL+=", "
+            DAY_LABEL+="${DAY_NAMES[$d]}"
+        done
+    fi
+    printf "Scheduled: %s at %02d:%02d\n" "$DAY_LABEL" "$HOUR" "$MINUTE"
+    echo "LaunchAgent: ${PLIST_PATH}"
+    echo "Logs:        ${LOG_PATH}"
+fi
+
+echo ""
+echo "Done. Run 'signal-update' to update Signal manually at any time."

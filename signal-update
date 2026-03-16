@@ -1,0 +1,159 @@
+#!/bin/bash
+# signal-update — check for and install Signal Desktop updates on macOS
+# Schedule automatically with the accompanying LaunchAgent plist.
+
+set -euo pipefail
+
+APP="${HOME}/Applications/Signal.app"
+PLIST="${APP}/Contents/Info.plist"
+UPDATE_MANIFEST="https://updates.signal.org/desktop/latest-mac.yml"
+DOWNLOAD_BASE="https://updates.signal.org/desktop"
+
+# ── Verify Signal is installed ───────────────────────────────────────────────
+if [[ ! -f "$PLIST" ]]; then
+    echo "Error: Signal not found at ${APP}" >&2
+    exit 1
+fi
+
+INSTALLED=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$PLIST")
+ICON_FILE=$(/usr/libexec/PlistBuddy -c "Print CFBundleIconFile" "$PLIST" 2>/dev/null || echo "")
+[[ -n "$ICON_FILE" && "$ICON_FILE" != *.icns ]] && ICON_FILE="${ICON_FILE}.icns"
+ICON_PATH="${APP}/Contents/Resources/${ICON_FILE}"
+
+echo "Installed : ${INSTALLED}"
+
+# ── Fetch latest version from Signal's own update server ─────────────────────
+TMP_YML=$(mktemp)
+trap 'rm -f "$TMP_YML"' EXIT
+
+if ! curl -sf --max-time 30 "$UPDATE_MANIFEST" -o "$TMP_YML"; then
+    echo "Error: Could not reach Signal update server." >&2
+    exit 1
+fi
+
+# Parse version from YAML (format: "version: 8.2.1")
+LATEST=$(grep '^version:' "$TMP_YML" | awk '{print $2}')
+
+echo "Latest    : ${LATEST}"
+
+# ── Compare versions (handles multi-digit components, e.g. 7.9 vs 7.10) ─────
+if [[ "$INSTALLED" == "$LATEST" ]]; then
+    echo "Signal is up to date."
+    exit 0
+fi
+
+HIGHER=$(printf '%s\n%s\n' "$INSTALLED" "$LATEST" | sort -V | tail -1)
+if [[ "$HIGHER" == "$INSTALLED" ]]; then
+    echo "Installed version (${INSTALLED}) is newer than latest release (${LATEST}). Nothing to do."
+    exit 0
+fi
+
+# ── Build DMG download URL (Signal ships a universal DMG for all Macs) ────────
+DMG_NAME="signal-desktop-mac-universal-${LATEST}.dmg"
+DOWNLOAD_URL="${DOWNLOAD_BASE}/${DMG_NAME}"
+DMG="${HOME}/Downloads/${DMG_NAME}"
+
+# ── Download DMG (skip if already downloaded) ─────────────────────────────────
+if [[ -f "$DMG" ]]; then
+    echo "Already downloaded: ${DMG}"
+else
+    echo "Downloading Signal ${LATEST}..."
+    curl -L --progress-bar -o "${DMG}.part" "$DOWNLOAD_URL"
+    mv "${DMG}.part" "$DMG"
+fi
+
+# ── Mount, install, unmount ───────────────────────────────────────────────────
+WORK_DIR=$(mktemp -d)
+MOUNT_POINT=""
+
+cleanup() {
+    [[ -n "$MOUNT_POINT" ]] && hdiutil detach "$MOUNT_POINT" -quiet -force 2>/dev/null || true
+    rm -rf "$WORK_DIR"
+}
+trap cleanup EXIT
+
+echo "Mounting disk image..."
+MOUNT_POINT="${WORK_DIR}/mount"
+mkdir "$MOUNT_POINT"
+hdiutil attach "$DMG" -nobrowse -quiet -mountpoint "$MOUNT_POINT"
+
+if [[ ! -d "${MOUNT_POINT}/Signal.app" ]]; then
+    echo "Error: Signal.app not found in mounted DMG at ${MOUNT_POINT}." >&2
+    ls "$MOUNT_POINT" >&2
+    exit 1
+fi
+
+# ── Notify and quit Signal if it is running ─────────────────────────────────
+SIGNAL_WAS_RUNNING=false
+if pgrep -xq "Signal"; then
+    SIGNAL_WAS_RUNNING=true
+    RESPONSE=$(osascript << EOF
+set signalIcon to POSIX file "${ICON_PATH}"
+set theResult to display dialog "Version ${LATEST} is available (installed: ${INSTALLED}).
+
+Signal will quit and relaunch automatically after the update." with title "Signal Update Available" buttons {"Decline", "Proceed"} default button "Proceed" with icon signalIcon
+return button returned of theResult
+EOF
+    ) || RESPONSE="Decline"
+
+    if [[ "$RESPONSE" != "Proceed" ]]; then
+        echo "Update declined by user."
+        exit 0
+    fi
+
+    echo "Quitting Signal..."
+    osascript -e 'quit app "Signal"'
+
+    echo "Waiting for Signal to quit..."
+    WAIT=0
+    while pgrep -xq "Signal"; do
+        if (( WAIT >= 30 )); then
+            echo "Signal did not quit after 30s, forcing..." >&2
+            pkill -x "Signal" || true
+            sleep 2
+            break
+        fi
+        sleep 1
+        (( WAIT++ ))
+    done
+    echo "Signal has quit."
+fi
+
+# ── Back up current installation ─────────────────────────────────────────────
+BACKUP="${HOME}/Applications/Signal.app.bak"
+rm -rf "$BACKUP"
+cp -a "$APP" "$BACKUP"
+
+# ── Install new version (restore backup on failure) ──────────────────────────
+rm -rf "$APP"
+if ! ditto "${MOUNT_POINT}/Signal.app" "$APP"; then
+    echo "Error: Installation failed. Restoring previous version..." >&2
+    rm -rf "$APP"
+    mv "$BACKUP" "$APP"
+    echo "Restored Signal ${INSTALLED}." >&2
+    exit 1
+fi
+rm -rf "$BACKUP"
+
+hdiutil detach "$MOUNT_POINT" -quiet -force
+MOUNT_POINT=""
+
+# ── Remove old Signal DMGs from Downloads (keep only current) ────────────────
+find "${HOME}/Downloads" -maxdepth 1 -name 'signal-desktop-mac-universal-*.dmg' \
+    ! -name "$DMG_NAME" -delete
+
+echo "Signal updated: ${INSTALLED} → ${LATEST}"
+
+# ── Show completion notification only if Signal was not running before ────────
+if [[ "$SIGNAL_WAS_RUNNING" == false ]]; then
+    osascript << EOF || true
+set signalIcon to POSIX file "${ICON_PATH}"
+display dialog "Signal has been updated from ${INSTALLED} to ${LATEST}." with title "Signal Updated" buttons {"OK"} default button "OK" with icon signalIcon giving up after 10
+EOF
+fi
+
+# ── Relaunch Signal if it was running before the update ──────────────────────
+if [[ "$SIGNAL_WAS_RUNNING" == true ]]; then
+    echo "Relaunching Signal..."
+    open "${APP}"
+fi
