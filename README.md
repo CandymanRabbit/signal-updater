@@ -22,8 +22,14 @@ A lightweight macOS shell script that checks Signal Desktop's official update se
 Install with a single command — no need to clone the repo:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install | bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install)"
 ```
+
+> If you prefer, you can also run the same with `curl` piped into `bash` (they behave the same):
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install | bash
+> ```
 
 To install **with scheduling**, pass flags after `bash -s --`:
 

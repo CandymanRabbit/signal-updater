@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-RAW_BASE="https://github.com/CandymanRabbit/signal-updater/main"
+RAW_BASE="https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main"
 INSTALL_DIR="${HOME}/.local/bin"
 INSTALL_PATH="${INSTALL_DIR}/signal-update"
 PLIST_LABEL="com.user.signal-updater"
