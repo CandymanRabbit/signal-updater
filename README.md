@@ -98,5 +98,5 @@ signal-update
 
 ## License
 
-This project is licensed under the [Creative Commons Attribution-NonCommercial 4.0 International License](LICENSE).  
+This project is licensed under the [GNU General Public License v3.0 (GPL-3.0)](LICENSE).  
 You may use, share, and adapt this work for **non-commercial purposes only**, with attribution.
