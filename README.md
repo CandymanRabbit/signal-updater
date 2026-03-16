@@ -99,4 +99,4 @@ signal-update
 ## License
 
 This project is licensed under the [GNU General Public License v3.0 (GPL-3.0)](LICENSE).  
-You may use, share, and adapt this work for **non-commercial purposes only**, with attribution.
+You are free to use, modify, and distribute this software, provided that any distributed version — modified or not — is also released under the GPL-3.0. This software comes with no warranty.
