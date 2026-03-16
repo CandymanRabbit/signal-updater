@@ -167,6 +167,12 @@ write_plist() {
     shift 2
     local days=("$@")
 
+    mkdir -p "${HOME}/Library/LaunchAgents"
+
+    local tmpplist
+    tmpplist=$(mktemp "${HOME}/Library/LaunchAgents/.signal-updater.plist.XXXX")
+    trap 'rm -f "${tmpplist}"' EXIT
+
     {
         printf '<?xml version="1.0" encoding="UTF-8"?>\n'
         printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"\n'
@@ -196,7 +202,14 @@ write_plist() {
         printf '    <key>StandardErrorPath</key>\n    <string>%s</string>\n' "$LOG_PATH"
         printf '    <key>RunAtLoad</key>\n    <false/>\n'
         printf '</dict>\n</plist>\n'
-    } > "$PLIST_PATH"
+    } > "$tmpplist"
+
+    if ! install -m 644 "$tmpplist" "$PLIST_PATH"; then
+        echo "Error: Failed to write LaunchAgent plist to ${PLIST_PATH}." >&2
+        echo "Check ownership/permissions of ~/Library/LaunchAgents and try again." >&2
+        echo "You can fix it with: sudo chown -R \$(whoami) \"\${HOME}/Library/LaunchAgents\"" >&2
+        exit 1
+    fi
 }
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
