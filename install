@@ -207,7 +207,7 @@ write_plist() {
     if ! install -m 644 "$tmpplist" "$PLIST_PATH"; then
         echo "Error: Failed to write LaunchAgent plist to ${PLIST_PATH}." >&2
         echo "Check ownership/permissions of ~/Library/LaunchAgents and try again." >&2
-        echo "You can fix it with: sudo chown -R \$(whoami) \"\${HOME}/Library/LaunchAgents\"" >&2
+        echo -e "You can fix it with: \033[33msudo chown -R \$(whoami) \"\${HOME}/Library/LaunchAgents\"\033[0m" >&2
         exit 1
     fi
 }
