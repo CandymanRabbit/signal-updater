@@ -10,7 +10,7 @@ PLIST_LABEL="com.user.signal-updater"
 PLIST_PATH="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
 LOG_PATH="${HOME}/Library/Logs/signal-updater.log"
 
-SCHEDULE=false
+SCHEDULE=true
 UNINSTALL=false
 TIME_ARG=""
 DAYS_ARG=""
@@ -21,9 +21,9 @@ usage() {
 Usage: ./install [options]
 
 Options:
-  -s            Enable scheduling via LaunchAgent (default: every day at 09:00)
+  -dS           Disable scheduling (default: scheduling is enabled at 09:00)
   -t <time>     Time of day — 24h format (e.g. 14:30) or 12h format (e.g. 2:30pm, 9am)
-  -d <days>     Day(s) of week — use alongside -s
+  -d <days>     Day(s) of week — day names, numbers, ranges, or comma lists
                   Names:   Mon Tue Wed Thu Fri Sat Sun  (case-insensitive)
                   Numbers: 0=Sun 1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat
                   Comma-separated: Mon,Wed,Fri  or  1,3,5
@@ -33,13 +33,13 @@ Options:
   -h            Show this help
 
 Examples:
-  ./install                             Install only, no schedule
-  ./install -s                          Schedule: every day at 09:00
-  ./install -s -t 14:30                 Schedule: every day at 14:30
-  ./install -s -t 8:30am               Schedule: every day at 08:30
-  ./install -s -d Mon-Fri              Schedule: Mon–Fri at 09:00
-  ./install -s -d Mon,Wed,Fri -t 7am   Schedule: Mon/Wed/Fri at 07:00
-  ./install -s -d 1-5 -t 22:00         Schedule: Mon–Fri at 22:00
+  ./install                             Install with scheduling every day at 09:00
+  ./install -dS                         Install without scheduling
+  ./install -t 14:30                    Install and schedule every day at 14:30
+  ./install -t 8:30am                  Install and schedule every day at 08:30
+  ./install -d Mon-Fri                 Install and schedule Mon–Fri at 09:00
+  ./install -d Mon,Wed,Fri -t 7am      Install and schedule Mon/Wed/Fri at 07:00
+  ./install -d 1-5 -t 22:00            Install and schedule Mon–Fri at 22:00
   ./install -u                          Uninstall
 EOF
 }
@@ -213,9 +213,9 @@ write_plist() {
 }
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
-while getopts ":sd:t:uh" opt; do
+while getopts ":dSd:t:uh" opt; do
     case $opt in
-        s) SCHEDULE=true ;;
+        dS) SCHEDULE=false ;;
         d) DAYS_ARG="$OPTARG" ;;
         t) TIME_ARG="$OPTARG" ;;
         u) UNINSTALL=true ;;
@@ -230,9 +230,9 @@ if [[ "$UNINSTALL" == true ]]; then
     uninstall; exit 0
 fi
 
-# Warn if -d / -t used without -s
+# Warn if -d / -t used with -dS
 if [[ "$SCHEDULE" == false && ( -n "$DAYS_ARG" || -n "$TIME_ARG" ) ]]; then
-    echo "Warning: -d/-t have no effect without -s." >&2
+    echo "Warning: -d/-t have no effect with -dS (scheduling disabled)." >&2
 fi
 
 # ── Install script ────────────────────────────────────────────────────────────

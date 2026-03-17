@@ -25,21 +25,30 @@ Install with a single command — no need to clone the repo:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install)"
 ```
 
-> If you prefer, you can also run the same with `curl` piped into `bash` (they behave the same):
+This installs Signal Desktop updater **with automatic scheduling enabled** (every day at 09:00).
+
+To install **without scheduling**, pass the `-dS` flag:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install)" -- -dS
+```
+
+To customize the schedule, pass flags after `--`:
+
+```bash
+# Mon–Fri at 08:30
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install)" -- -d Mon-Fri -t 8:30am
+
+# Every day at 14:30
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install)" -- -t 14:30
+```
+
+> If you prefer, you can also use `curl` piped into `bash` (they behave the same):
 >
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install | bash
+> curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install | bash -s -- -dS
 > ```
-
-To install **with scheduling**, pass flags after `bash -s --`:
-
-```bash
-# Every day at 09:00 (default)
-curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install | bash -s -- -s
-
-# Mon–Fri at 08:30
-curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install | bash -s -- -s -d Mon-Fri -t 8:30am
-```
 
 <details>
 <summary>Clone and install locally instead</summary>
@@ -54,9 +63,11 @@ chmod +x install signal-update
 
 ### Schedule automatic updates
 
+Scheduling is **enabled by default** — the updater runs every day at 09:00.
+
 | Flag | Values | Description |
 |------|--------|-------------|
-| `-s` | — | Enable scheduling (default: every day at 09:00) |
+| `-dS` | — | Disable scheduling |
 | `-t` | `HH:MM` or `H:MMam/pm` | Override the time of day |
 | `-d` | Day names, numbers, ranges, or comma lists | Restrict to specific days of the week |
 
@@ -68,12 +79,13 @@ chmod +x install signal-update
 - Mixed: `Mon-Wed,Fri,6`  
 
 ```bash
-./install -s                         # every day at 09:00
-./install -s -t 14:30                # every day at 14:30
-./install -s -t 8:30am               # every day at 08:30
-./install -s -d Mon-Fri              # Mon–Fri at 09:00
-./install -s -d Mon,Wed,Fri -t 7am   # Mon/Wed/Fri at 07:00
-./install -s -d 1-5 -t 22:00         # Mon–Fri at 22:00
+./install                         # Install with daily schedule at 09:00
+./install -dS                     # Install without scheduling
+./install -t 14:30                # Daily at 14:30
+./install -t 8:30am              # Daily at 08:30
+./install -d Mon-Fri             # Mon–Fri at 09:00
+./install -d Mon,Wed,Fri -t 7am  # Mon/Wed/Fri at 07:00
+./install -d 1-5 -t 22:00        # Mon–Fri at 22:00
 ```
 
 Scheduling uses a macOS **LaunchAgent** (`~/Library/LaunchAgents/com.user.signal-updater.plist`).  
@@ -82,7 +94,7 @@ Logs are written to `~/Library/Logs/signal-updater.log`.
 ### Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install | bash -s -- -u
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/CandymanRabbit/signal-updater/main/install)" -- -u
 ```
 
 Removes the installed script and unloads the LaunchAgent.
