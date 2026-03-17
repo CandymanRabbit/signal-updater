@@ -170,7 +170,7 @@ write_plist() {
     mkdir -p "${HOME}/Library/LaunchAgents"
 
     local tmpplist
-    tmpplist=$(mktemp "${HOME}/Library/LaunchAgents/.signal-updater.plist.XXXX")
+    tmpplist=$(mktemp)
     trap 'rm -f "${tmpplist}"' EXIT
 
     {
