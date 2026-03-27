@@ -7,6 +7,7 @@ A lightweight macOS shell script that checks Signal Desktop's official update se
 - Compares installed vs. latest version using Signal's own update manifest
 - Downloads only when a newer version is available (skips if already downloaded)
 - Prompts the user via macOS dialog if Signal is open, then quits and relaunches it automatically after updating
+![Update notification](/assets/update-notification.png)
 - Creates a backup of the current installation and restores it on failure
 - Cleans up old Signal DMGs from `~/Downloads`
 - Designed to run unattended via a LaunchAgent
