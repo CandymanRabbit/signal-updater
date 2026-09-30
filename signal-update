@@ -114,21 +114,25 @@ EOF
             break
         fi
         sleep 1
-        (( WAIT++ ))
+        WAIT=$(( WAIT + 1 ))
     done
     echo "Signal has quit."
 fi
 
-# ── Back up current installation ─────────────────────────────────────────────
+# ── Stage and install new version ────────────────────────────────────────────
 BACKUP="${HOME}/Applications/Signal.app.bak"
-rm -rf "$BACKUP"
-cp -a "$APP" "$BACKUP"
+STAGED="${HOME}/Applications/Signal.app.new"
+rm -rf "$BACKUP" "$STAGED"
 
-# ── Install new version (restore backup on failure) ──────────────────────────
-rm -rf "$APP"
-if ! ditto "${MOUNT_POINT}/Signal.app" "$APP"; then
+if ! ditto "${MOUNT_POINT}/Signal.app" "$STAGED"; then
+    echo "Error: Failed to stage Signal ${LATEST}." >&2
+    rm -rf "$STAGED"
+    exit 1
+fi
+
+mv "$APP" "$BACKUP"
+if ! mv "$STAGED" "$APP"; then
     echo "Error: Installation failed. Restoring previous version..." >&2
-    rm -rf "$APP"
     mv "$BACKUP" "$APP"
     echo "Restored Signal ${INSTALLED}." >&2
     exit 1
@@ -138,18 +142,15 @@ rm -rf "$BACKUP"
 hdiutil detach "$MOUNT_POINT" -quiet -force
 MOUNT_POINT=""
 
-# ── Remove old Signal DMGs from Downloads (keep only current) ────────────────
-find "${HOME}/Downloads" -maxdepth 1 -name 'signal-desktop-mac-universal-*.dmg' \
-    ! -name "$DMG_NAME" -delete
+# ── Remove all Signal DMGs from Downloads ────────────────────────────────────
+# A LaunchAgent may be denied permission to enumerate Downloads by macOS.
+find "${HOME}/Downloads" -maxdepth 1 -name 'signal-desktop-mac-universal-*.dmg' -delete 2>/dev/null || true
 
 echo "Signal updated: ${INSTALLED} → ${LATEST}"
 
 # ── Show completion notification only if Signal was not running before ────────
 if [[ "$SIGNAL_WAS_RUNNING" == false ]]; then
-    osascript << EOF || true
-set signalIcon to POSIX file "${ICON_PATH}"
-display dialog "Signal has been updated from ${INSTALLED} to ${LATEST}." with title "Signal Updated" buttons {"OK"} default button "OK" with icon signalIcon giving up after 10
-EOF
+    osascript -e "display notification \"Signal has been updated from ${INSTALLED} to ${LATEST}.\" with title \"Signal Updated\"" || true
 fi
 
 # ── Relaunch Signal if it was running before the update ──────────────────────
